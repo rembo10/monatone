@@ -1,0 +1,47 @@
+# Haskell build artifacts
+dist-newstyle/
+dist/
+.stack-work/
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+
+# Cabal
+cabal.project.local
+cabal.project.local~
+.ghc.environment.*
+
+# Stack
+stack.yaml.lock
+.stack-work/
+
+# Nix
+result
+result-*
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+.vim/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.tix
+.hpc/
+
+# Backup files
+*.backup
+*.bak
+
+# Temporary test files
+test/fixtures/*.mp3
+test/fixtures/*.flac
+!test/fixtures/.gitkeep
