@@ -278,15 +278,16 @@ parseVorbisCommentsGet metadata = do
         Nothing -> rest
 
 -- | Parse Picture block according to FLAC specification
+-- Only extracts metadata, not the actual image data (for performance)
 parsePictureBlock :: BS.ByteString -> Metadata -> Metadata
-parsePictureBlock bs metadata = 
+parsePictureBlock bs metadata =
   let lazyBs = L.fromStrict bs
-  in case runGetOrFail parsePictureData lazyBs of
+  in case runGetOrFail parsePictureInfo lazyBs of
     Left _ -> metadata
-    Right (_, _, albumArt') -> metadata { albumArt = Just albumArt' }
+    Right (_, _, artInfo) -> metadata { albumArtInfo = Just artInfo }
   where
-    parsePictureData :: Get AlbumArt
-    parsePictureData = do
+    parsePictureInfo :: Get AlbumArtInfo
+    parsePictureInfo = do
       pictureType <- getWord32be
       mimeLength <- getWord32be
       mimeType <- getByteString (fromIntegral mimeLength)
@@ -297,13 +298,14 @@ parsePictureBlock bs metadata =
       _colorDepth <- getWord32be
       _numColors <- getWord32be
       pictureDataLength <- getWord32be
-      pictureData <- getByteString (fromIntegral pictureDataLength)
-      
-      return $ AlbumArt
-        { albumArtMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
-        , albumArtPictureType = fromIntegral pictureType
-        , albumArtDescription = TE.decodeUtf8With TEE.lenientDecode description
-        , albumArtData = pictureData
+      -- Skip the actual picture data instead of reading it
+      -- skip (fromIntegral pictureDataLength)
+
+      return $ AlbumArtInfo
+        { albumArtInfoMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
+        , albumArtInfoPictureType = fromIntegral pictureType
+        , albumArtInfoDescription = TE.decodeUtf8With TEE.lenientDecode description
+        , albumArtInfoSizeBytes = fromIntegral pictureDataLength
         }
 
 -- | Extract year from DATE field (YYYY-MM-DD or just YYYY)

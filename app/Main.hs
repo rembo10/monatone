@@ -43,7 +43,7 @@ instance ToJSON Metadata where
     , "barcode" .= barcode metadata
     , "releaseStatus" .= releaseStatus metadata
     , "releaseType" .= releaseType metadata
-    , "albumArt" .= albumArt metadata
+    , "albumArtInfo" .= albumArtInfo metadata
     , "audioProperties" .= audioProperties metadata
     , "musicBrainzIds" .= musicBrainzIds metadata
     , "acoustidFingerprint" .= acoustidFingerprint metadata
@@ -70,6 +70,14 @@ instance ToJSON MusicBrainzIds where
     , "mbReleaseGroupId" .= mbReleaseGroupId ids
     , "mbWorkId" .= mbWorkId ids
     , "mbDiscId" .= mbDiscId ids
+    ]
+
+instance ToJSON AlbumArtInfo where
+  toJSON art = object
+    [ "mimeType" .= albumArtInfoMimeType art
+    , "pictureType" .= albumArtInfoPictureType art
+    , "description" .= albumArtInfoDescription art
+    , "sizeBytes" .= albumArtInfoSizeBytes art
     ]
 
 instance ToJSON AlbumArt where
@@ -155,13 +163,13 @@ printMetadata metadata = do
   putStrLn $ T.unpack $ "  ID: " <> fromMaybe "null" (acoustidId metadata)
   
   putStrLn "\nAlbum Art:"
-  case albumArt metadata of
+  case albumArtInfo metadata of
     Nothing -> putStrLn "  None"
-    Just art -> do
-      putStrLn $ T.unpack $ "  MIME Type: " <> albumArtMimeType art
-      putStrLn $ T.unpack $ "  Picture Type: " <> T.pack (show (albumArtPictureType art)) <> " (" <> describePictureType (albumArtPictureType art) <> ")"
-      putStrLn $ T.unpack $ "  Description: " <> if T.null (albumArtDescription art) then "(empty)" else albumArtDescription art
-      putStrLn $ T.unpack $ "  Data Size: " <> T.pack (show (BS.length (albumArtData art))) <> " bytes"
+    Just artInfo -> do
+      putStrLn $ T.unpack $ "  MIME Type: " <> albumArtInfoMimeType artInfo
+      putStrLn $ T.unpack $ "  Picture Type: " <> T.pack (show (albumArtInfoPictureType artInfo)) <> " (" <> describePictureType (albumArtInfoPictureType artInfo) <> ")"
+      putStrLn $ T.unpack $ "  Description: " <> if T.null (albumArtInfoDescription artInfo) then "(empty)" else albumArtInfoDescription artInfo
+      putStrLn $ T.unpack $ "  Size: " <> T.pack (show (albumArtInfoSizeBytes artInfo)) <> " bytes"
   
   putStrLn $ T.unpack $ "\nRaw tags count: " <> T.pack (show (length $ rawTags metadata))
 

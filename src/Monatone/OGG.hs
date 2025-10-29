@@ -177,7 +177,7 @@ parseVorbisCommentGet metadata = do
     , barcode = HM.lookup "BARCODE" tagMap
     , releaseStatus = HM.lookup "RELEASESTATUS" tagMap
     , releaseType = HM.lookup "RELEASETYPE" tagMap
-    , albumArt = HM.lookup "METADATA_BLOCK_PICTURE" tagMap >>= parseVorbisPicture
+    , albumArtInfo = HM.lookup "METADATA_BLOCK_PICTURE" tagMap >>= parseVorbisPictureInfo
     , musicBrainzIds = MusicBrainzIds
       { mbTrackId = HM.lookup "MUSICBRAINZ_RELEASETRACKID" tagMap
       , mbRecordingId = HM.lookup "MUSICBRAINZ_TRACKID" tagMap
@@ -209,22 +209,22 @@ parseVorbisCommentGet metadata = do
         Just c -> c : rest
         Nothing -> rest
 
--- | Parse Vorbis picture (base64-encoded FLAC picture block)
-parseVorbisPicture :: Text -> Maybe AlbumArt
-parseVorbisPicture encodedData =
+-- | Parse Vorbis picture info (base64-encoded FLAC picture block, metadata only)
+parseVorbisPictureInfo :: Text -> Maybe AlbumArtInfo
+parseVorbisPictureInfo encodedData =
   case B64.decode (TE.encodeUtf8 encodedData) of
     Left _ -> Nothing
-    Right pictureData -> parseFLACPictureBlock pictureData
+    Right pictureData -> parseFLACPictureBlockInfo pictureData
   where
-    parseFLACPictureBlock :: BS.ByteString -> Maybe AlbumArt
-    parseFLACPictureBlock bs =
+    parseFLACPictureBlockInfo :: BS.ByteString -> Maybe AlbumArtInfo
+    parseFLACPictureBlockInfo bs =
       let lazyBs = L.fromStrict bs
-      in case runGetOrFail parsePictureData lazyBs of
+      in case runGetOrFail parsePictureInfo lazyBs of
         Left _ -> Nothing
-        Right (_, _, albumArt') -> Just albumArt'
-    
-    parsePictureData :: Get AlbumArt
-    parsePictureData = do
+        Right (_, _, artInfo) -> Just artInfo
+
+    parsePictureInfo :: Get AlbumArtInfo
+    parsePictureInfo = do
       pictureType <- getWord32be
       mimeLength <- getWord32be
       mimeType <- getByteString (fromIntegral mimeLength)
@@ -235,13 +235,14 @@ parseVorbisPicture encodedData =
       _colorDepth <- getWord32be
       _numColors <- getWord32be
       pictureDataLength <- getWord32be
-      pictureData <- getByteString (fromIntegral pictureDataLength)
-      
-      return $ AlbumArt
-        { albumArtMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
-        , albumArtPictureType = fromIntegral pictureType
-        , albumArtDescription = TE.decodeUtf8With TEE.lenientDecode description
-        , albumArtData = pictureData
+      -- Skip reading the actual picture data for performance
+      -- skip (fromIntegral pictureDataLength)
+
+      return $ AlbumArtInfo
+        { albumArtInfoMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
+        , albumArtInfoPictureType = fromIntegral pictureType
+        , albumArtInfoDescription = TE.decodeUtf8With TEE.lenientDecode description
+        , albumArtInfoSizeBytes = fromIntegral pictureDataLength
         }
 
 -- | Extract year from DATE field (YYYY-MM-DD or just YYYY)

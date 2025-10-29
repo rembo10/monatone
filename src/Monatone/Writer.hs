@@ -205,8 +205,8 @@ applyUpdate update metadata =
       !totDiscs = totalDiscs metadata
       !relStatus = releaseStatus metadata
       !relType = releaseType metadata
-      -- Handle album art carefully to avoid thunk loops
-      artField = applyMaybeUpdate (updateAlbumArt update) (albumArt metadata)
+      -- Album art info is read-only (no writing support for now, as Metadata only stores info not data)
+      !artInfo = albumArtInfo metadata
   in Metadata
     { format = fmt
     , title = applyMaybeUpdate (updateTitle update) (title metadata)
@@ -228,7 +228,7 @@ applyUpdate update metadata =
     , barcode = applyMaybeUpdate (updateBarcode update) (barcode metadata)
     , releaseStatus = relStatus
     , releaseType = relType
-    , albumArt = artField
+    , albumArtInfo = artInfo  -- Read-only, no writing support
     , audioProperties = props
     , musicBrainzIds = mbids
     , acoustidFingerprint = acoustFP

@@ -84,8 +84,8 @@ parseID3v2Tag :: Word8 -> Word8 -> BS.ByteString -> Metadata -> Metadata
 parseID3v2Tag version _flags tagData metadata =
   let frames = parseID3v2Frames version (L.fromStrict tagData)
       tagMap = HM.fromList frames
-      -- Try to find and parse APIC frame for album art
-      parsedAlbumArt = findAndParseAPIC version (L.fromStrict tagData)
+      -- Try to find and parse APIC frame for album art info (metadata only, not image data)
+      parsedAlbumArtInfo = findAndParseAPICInfo version (L.fromStrict tagData)
   in metadata
     { title = HM.lookup "TIT2" tagMap <|> HM.lookup "TT2" tagMap
     , artist = HM.lookup "TPE1" tagMap <|> HM.lookup "TP1" tagMap
@@ -104,7 +104,7 @@ parseID3v2Tag version _flags tagData metadata =
     , releaseCountry = HM.lookup "TXXX:MusicBrainz Album Release Country" tagMap
     , releaseStatus = HM.lookup "TXXX:MusicBrainz Album Status" tagMap
     , releaseType = HM.lookup "TXXX:MusicBrainz Album Type" tagMap
-    , albumArt = parsedAlbumArt
+    , albumArtInfo = parsedAlbumArtInfo
     , musicBrainzIds = extractMusicBrainzIds tagMap
     , acoustidFingerprint = extractAcoustidFingerprint tagMap
     , acoustidId = extractAcoustidId tagMap
@@ -617,9 +617,9 @@ parseVBRIHeader bs props _handle = do
                        , duration = if durationMs > 0 then Just durationMs else duration props }
         _ -> return props
 
--- | Find and parse APIC frame in ID3v2 tag data
-findAndParseAPIC :: Word8 -> L.ByteString -> Maybe AlbumArt
-findAndParseAPIC version bs
+-- | Find and parse APIC frame info in ID3v2 tag data (metadata only, no image data)
+findAndParseAPICInfo :: Word8 -> L.ByteString -> Maybe AlbumArtInfo
+findAndParseAPICInfo version bs
   | version < 3 = Nothing  -- APIC only in ID3v2.3+
   | otherwise = go bs
   where
@@ -629,11 +629,11 @@ findAndParseAPIC version bs
           case runGetOrFail (findAPICFrame version) bytes of
             Left _ -> Nothing
             Right (_, _, Just pic) -> Just pic
-            Right (rest, consumed, Nothing) 
+            Right (rest, consumed, Nothing)
               | consumed == 0 -> Nothing  -- No bytes consumed, stop to avoid infinite loop
               | otherwise -> go rest
-    
-    findAPICFrame :: Word8 -> Get (Maybe AlbumArt)
+
+    findAPICFrame :: Word8 -> Get (Maybe AlbumArtInfo)
     findAPICFrame _version = do
       frameId <- lookAhead $ getByteString 4
       if frameId == "APIC"
@@ -653,7 +653,7 @@ findAndParseAPIC version bs
             else getWord32be
           _ <- getWord16be  -- Skip flags
           frameData <- getByteString (fromIntegral frameSize)
-          return $ parseAPICFrame frameData
+          return $ parseAPICFrameInfo frameData
         else if BS.all (== 0) frameId
           then return Nothing  -- Padding reached
           else do
@@ -674,9 +674,9 @@ findAndParseAPIC version bs
             skip (fromIntegral frameSize)
             return Nothing
 
--- | Parse APIC (Attached Picture) frame
-parseAPICFrame :: BS.ByteString -> Maybe AlbumArt
-parseAPICFrame bs =
+-- | Parse APIC (Attached Picture) frame info (metadata only, not image data for performance)
+parseAPICFrameInfo :: BS.ByteString -> Maybe AlbumArtInfo
+parseAPICFrameInfo bs =
   if BS.null bs
     then Nothing
     else
@@ -695,12 +695,13 @@ parseAPICFrame bs =
                   if BS.null afterDesc
                     then Nothing
                     else
-                      let imageData = BS.drop 1 afterDesc  -- Skip null terminator
-                      in Just $ AlbumArt
-                        { albumArtMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
-                        , albumArtPictureType = pictureType
-                        , albumArtDescription = TE.decodeUtf8With TEE.lenientDecode description
-                        , albumArtData = imageData
+                      -- Don't read image data, just calculate its size
+                      let imageDataSize = BS.length (BS.drop 1 afterDesc)
+                      in Just $ AlbumArtInfo
+                        { albumArtInfoMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
+                        , albumArtInfoPictureType = pictureType
+                        , albumArtInfoDescription = TE.decodeUtf8With TEE.lenientDecode description
+                        , albumArtInfoSizeBytes = imageDataSize
                         }
 
 -- | Extract year from TDRC date field (YYYY-MM-DD or just YYYY)

@@ -9,6 +9,7 @@ module Monatone.Metadata
   , Metadata(..)
   , AudioProperties(..)
   , MusicBrainzIds(..)
+  , AlbumArtInfo(..)
   , AlbumArt(..)
   , emptyMetadata
   , emptyAudioProperties
@@ -65,7 +66,15 @@ data MusicBrainzIds = MusicBrainzIds
   , mbDiscId :: Maybe Text          -- CD TOC-based disc ID
   } deriving (Show, Eq)
 
--- | Album art / attached picture
+-- | Album art metadata without binary data (lightweight for scanning)
+data AlbumArtInfo = AlbumArtInfo
+  { albumArtInfoMimeType :: Text           -- e.g., "image/jpeg", "image/png"
+  , albumArtInfoPictureType :: Word8       -- ID3v2 picture type (0 = Other, 3 = Cover Front, etc.)
+  , albumArtInfoDescription :: Text        -- Textual description
+  , albumArtInfoSizeBytes :: Int           -- Size of image data in bytes
+  } deriving (Show, Eq)
+
+-- | Album art / attached picture (includes full binary data)
 data AlbumArt = AlbumArt
   { albumArtMimeType :: Text           -- e.g., "image/jpeg", "image/png"
   , albumArtPictureType :: Word8       -- ID3v2 picture type (0 = Other, 3 = Cover Front, etc.)
@@ -95,7 +104,7 @@ data Metadata = Metadata
   , barcode :: Maybe Text         -- Barcode/UPC
   , releaseStatus :: Maybe Text   -- Official, Promotional, etc.
   , releaseType :: Maybe Text     -- Album, Single, EP, etc.
-  , albumArt :: Maybe AlbumArt    -- Album artwork/cover art
+  , albumArtInfo :: Maybe AlbumArtInfo  -- Album artwork metadata (lightweight)
   , audioProperties :: AudioProperties
   , musicBrainzIds :: MusicBrainzIds
   , acoustidFingerprint :: Maybe Text  -- Chromaprint/AcoustID fingerprint
@@ -126,7 +135,7 @@ emptyMetadata fmt = Metadata
   , barcode = Nothing
   , releaseStatus = Nothing
   , releaseType = Nothing
-  , albumArt = Nothing
+  , albumArtInfo = Nothing
   , audioProperties = emptyAudioProperties
   , musicBrainzIds = emptyMusicBrainzIds
   , acoustidFingerprint = Nothing

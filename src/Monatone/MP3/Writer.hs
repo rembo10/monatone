@@ -261,12 +261,14 @@ generateFrames metadata = do
   -- Add date field (separate from year) if present
   frames17 <- addTextFrame frames16 "TDRC" (date metadata)
 
-  -- Add album art frame if present
-  finalFrames <- case albumArt metadata of
-    Nothing -> return frames17
-    Just artData -> do
-      apicFrame <- generateAPICFrame artData
-      return $ apicFrame : frames17
+  -- TODO: Album art writing temporarily disabled - Metadata now only stores AlbumArtInfo
+  -- Writers will need to load full AlbumArt separately when needed
+  finalFrames <- return frames17
+  -- finalFrames <- case albumArt metadata of
+  --   Nothing -> return frames17
+  --   Just artData -> do
+  --     apicFrame <- generateAPICFrame artData
+  --     return $ apicFrame : frames17
 
   return finalFrames
   where
