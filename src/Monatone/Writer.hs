@@ -50,6 +50,7 @@ import Control.Exception (try, IOException, evaluate)
 
 import Monatone.Metadata
 import Monatone.Types (Parser, ParseError(..))
+import Monatone.Common (loadAlbumArt)
 import qualified Monatone.MP3 as MP3
 import qualified Monatone.FLAC as FLAC
 import qualified Monatone.MP3.Writer as MP3Writer
@@ -241,20 +242,20 @@ applyUpdate update metadata =
     applyMaybeUpdate (Just newValue) _ = newValue       -- Apply change (including clearing)
 
 -- | Write complete metadata to a new file
-writeMetadata :: Metadata -> OsPath -> Writer ()
-writeMetadata metadata filePath = do
+writeMetadata :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeMetadata metadata maybeAlbumArt filePath = do
   let audioFormat = format metadata
   case audioFormat of
-    MP3 -> writeMP3Metadata metadata filePath
-    FLAC -> writeFLACMetadata metadata filePath
+    MP3 -> writeMP3Metadata metadata maybeAlbumArt filePath
+    FLAC -> writeFLACMetadata metadata maybeAlbumArt filePath
     _ -> throwError $ UnsupportedWriteFormat audioFormat
 
 -- | Write metadata to the same file (with backup)
-writeMetadataToFile :: Metadata -> OsPath -> Writer ()
-writeMetadataToFile metadata filePath = do
+writeMetadataToFile :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeMetadataToFile metadata maybeAlbumArt filePath = do
   -- Create backup path by appending .backup to filename
   let backupPath = filePath <> [osp|.backup|]
-  
+
   -- Create backup by copying (not renaming) so original stays available for writers
   backupResult <- liftIO $ try $ do
     content <- readFile' filePath
@@ -263,13 +264,13 @@ writeMetadataToFile metadata filePath = do
     Left (ioErr :: IOException) -> throwError $ WriteIOError $ "Failed to create backup: " <> T.pack (show ioErr)
     Right _ -> do
       -- Try to write new file
-      writeResult <- liftIO $ runExceptT $ writeMetadata metadata filePath
+      writeResult <- liftIO $ runExceptT $ writeMetadata metadata maybeAlbumArt filePath
       case writeResult of
         Left err -> do
           -- Restore backup on failure
           restoreResult <- liftIO $ try $ renameFile backupPath filePath
           case restoreResult of
-            Left (restoreErr :: IOException) -> 
+            Left (restoreErr :: IOException) ->
               throwError $ WriteIOError $ "Write failed and backup restore failed: " <> T.pack (show restoreErr)
             Right _ -> throwError err
         Right _ -> do
@@ -289,15 +290,31 @@ updateMetadata filePath update = do
     Right existingMetadata -> do
       -- Apply update
       let updatedMetadata = applyUpdate update existingMetadata
+
       -- Force evaluation of the format field to ensure metadata is constructed
       _ <- liftIO $ evaluate (format updatedMetadata)
+
+      -- Determine album art to write
+      maybeArt <- case updateAlbumArt update of
+        Just Nothing -> return Nothing  -- Explicitly removing artwork
+        Just (Just art) -> return (Just art)  -- Explicitly setting artwork
+        Nothing -> do  -- No change to artwork - preserve existing
+          case albumArtInfo existingMetadata of
+            Nothing -> return Nothing  -- No existing artwork
+            Just _ -> do
+              -- Load existing artwork from file
+              artResult <- liftIO $ loadAlbumArt filePath
+              case artResult of
+                Left _ -> return Nothing  -- Failed to load, continue without it
+                Right art -> return art
+
       -- Write back
-      writeMetadataToFile updatedMetadata filePath
+      writeMetadataToFile updatedMetadata maybeArt filePath
 
 -- | Write MP3 metadata using the MP3Writer module
-writeMP3Metadata :: Metadata -> OsPath -> Writer ()
-writeMP3Metadata metadata filePath = do
-  result <- liftIO $ runExceptT $ MP3Writer.writeMP3Metadata metadata filePath
+writeMP3Metadata :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeMP3Metadata metadata maybeAlbumArt filePath = do
+  result <- liftIO $ runExceptT $ MP3Writer.writeMP3Metadata metadata maybeAlbumArt filePath
   case result of
     Left mp3Err -> throwError $ convertMP3Error mp3Err
     Right () -> return ()
@@ -309,9 +326,9 @@ writeMP3Metadata metadata filePath = do
     convertMP3Error (MP3Writer.CorruptedWrite msg) = CorruptedWrite msg
 
 -- | Write FLAC metadata using the FLACWriter module
-writeFLACMetadata :: Metadata -> OsPath -> Writer ()
-writeFLACMetadata metadata filePath = do
-  result <- liftIO $ runExceptT $ FLACWriter.writeFLACMetadata metadata filePath
+writeFLACMetadata :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeFLACMetadata metadata maybeAlbumArt filePath = do
+  result <- liftIO $ runExceptT $ FLACWriter.writeFLACMetadata metadata maybeAlbumArt filePath
   case result of
     Left flacErr -> throwError $ convertFLACError flacErr
     Right () -> return ()

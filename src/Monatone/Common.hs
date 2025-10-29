@@ -4,6 +4,7 @@
 module Monatone.Common
   ( detectFormat
   , parseMetadata
+  , loadAlbumArt
   ) where
 
 import Control.Monad.Except (runExceptT)
@@ -56,6 +57,20 @@ parseMetadata filePath = do
     Just fmt -> runExceptT $ case fmt of
       FLAC -> FLAC.parseFLAC filePath
       OGG -> OGG.parseOGG filePath
-      Opus -> OGG.parseOGG filePath  -- Opus uses same OGG container format 
+      Opus -> OGG.parseOGG filePath  -- Opus uses same OGG container format
       MP3 -> MP3.parseMP3 filePath
+
+-- | Load full album art from file on-demand (for writing)
+-- This reads only the album art data, not all metadata
+loadAlbumArt :: OsPath -> IO (Either ParseError (Maybe AlbumArt))
+loadAlbumArt filePath = do
+  -- Only read first 12 bytes for format detection
+  header <- withBinaryFile filePath ReadMode $ \h -> BS.hGet h 12
+  case detectFormat header of
+    Nothing -> return $ Left $ UnsupportedFormat "Unknown audio format"
+    Just fmt -> runExceptT $ case fmt of
+      FLAC -> FLAC.loadAlbumArtFLAC filePath
+      OGG -> OGG.loadAlbumArtOGG filePath
+      Opus -> OGG.loadAlbumArtOGG filePath
+      MP3 -> MP3.loadAlbumArtMP3 filePath
 

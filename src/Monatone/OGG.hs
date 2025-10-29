@@ -3,6 +3,7 @@
 
 module Monatone.OGG
   ( parseOGG
+  , loadAlbumArtOGG
   ) where
 
 import Control.Applicative ((<|>))
@@ -245,9 +246,123 @@ parseVorbisPictureInfo encodedData =
         , albumArtInfoSizeBytes = fromIntegral pictureDataLength
         }
 
+-- | Load album art from OGG file (full binary data for writing)
+loadAlbumArtOGG :: OsPath -> Parser (Maybe AlbumArt)
+loadAlbumArtOGG filePath = do
+  result <- liftIO $ withBinaryFile filePath ReadMode $ \handle -> do
+    -- Read first page to check OGG signature
+    firstHeader <- BS.hGet handle 27
+    if BS.length firstHeader < 27 || BS.take 4 firstHeader /= "OggS"
+      then return $ Right Nothing
+      else do
+        -- Parse pages looking for Vorbis comment with METADATA_BLOCK_PICTURE
+        hSeek handle AbsoluteSeek 0
+        Right <$> searchForPicture handle False False
+
+  case result of
+    Left err -> throwError err
+    Right maybeArt -> return maybeArt
+  where
+    searchForPicture :: Handle -> Bool -> Bool -> IO (Maybe AlbumArt)
+    searchForPicture handle foundIdent foundComment
+      | foundIdent && foundComment = return Nothing  -- Checked all metadata, no picture
+      | otherwise = do
+          headerBytes <- BS.hGet handle oggPageHeaderSize
+          if BS.length headerBytes < oggPageHeaderSize
+            then return Nothing
+            else do
+              if BS.take 4 headerBytes /= "OggS"
+                then return Nothing
+                else do
+                  let numSegments = fromIntegral $ BS.index headerBytes 26
+                  segmentTable <- BS.hGet handle numSegments
+                  let pageDataSize = sum $ map fromIntegral $ BS.unpack segmentTable
+
+                  if not foundIdent || not foundComment
+                    then do
+                      pageData <- BS.hGet handle pageDataSize
+                      let (newFoundIdent, newFoundComment, maybePicture) =
+                            if "\x01vorbis" `BS.isPrefixOf` pageData && not foundIdent
+                            then (True, foundComment, Nothing)
+                            else if "\x03vorbis" `BS.isPrefixOf` pageData && not foundComment
+                            then (foundIdent, True, extractPictureFromComment pageData)
+                            else (foundIdent, foundComment, Nothing)
+
+                      case maybePicture of
+                        Just art -> return (Just art)
+                        Nothing -> searchForPicture handle newFoundIdent newFoundComment
+                    else do
+                      hSeek handle RelativeSeek (fromIntegral pageDataSize)
+                      return Nothing
+
+    extractPictureFromComment :: BS.ByteString -> Maybe AlbumArt
+    extractPictureFromComment bs =
+      if BS.length bs < 7
+        then Nothing
+        else
+          let lazyBs = L.fromStrict bs
+          in case runGetOrFail (parseVorbisCommentForPicture) (L.drop 7 lazyBs) of
+            Left _ -> Nothing
+            Right (_, _, result) -> result
+
+    parseVorbisCommentForPicture :: Get (Maybe AlbumArt)
+    parseVorbisCommentForPicture = do
+      vendorLength <- getWord32le
+      skip (fromIntegral vendorLength)
+      numComments <- getWord32le
+      findPictureComment (fromIntegral numComments)
+
+    findPictureComment :: Int -> Get (Maybe AlbumArt)
+    findPictureComment 0 = return Nothing
+    findPictureComment n = do
+      commentLength <- getWord32le
+      commentBytes <- getByteString (fromIntegral commentLength)
+      case BS.split 0x3D commentBytes of
+        (key:value:_) ->
+          let keyText = T.toUpper $ TE.decodeUtf8With TEE.lenientDecode key
+              valueText = TE.decodeUtf8With TEE.lenientDecode value
+          in if keyText == "METADATA_BLOCK_PICTURE"
+             then return $ parseVorbisPictureFull valueText
+             else findPictureComment (n - 1)
+        _ -> findPictureComment (n - 1)
+
+    parseVorbisPictureFull :: Text -> Maybe AlbumArt
+    parseVorbisPictureFull encodedData =
+      case B64.decode (TE.encodeUtf8 encodedData) of
+        Left _ -> Nothing
+        Right pictureData -> parseFLACPictureBlockFull pictureData
+
+    parseFLACPictureBlockFull :: BS.ByteString -> Maybe AlbumArt
+    parseFLACPictureBlockFull bs =
+      let lazyBs = L.fromStrict bs
+      in case runGetOrFail parsePictureData lazyBs of
+        Left _ -> Nothing
+        Right (_, _, art) -> Just art
+
+    parsePictureData :: Get AlbumArt
+    parsePictureData = do
+      pictureType <- getWord32be
+      mimeLength <- getWord32be
+      mimeType <- getByteString (fromIntegral mimeLength)
+      descLength <- getWord32be
+      description <- getByteString (fromIntegral descLength)
+      _width <- getWord32be
+      _height <- getWord32be
+      _colorDepth <- getWord32be
+      _numColors <- getWord32be
+      pictureDataLength <- getWord32be
+      pictureData <- getByteString (fromIntegral pictureDataLength)
+
+      return $ AlbumArt
+        { albumArtMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
+        , albumArtPictureType = fromIntegral pictureType
+        , albumArtDescription = TE.decodeUtf8With TEE.lenientDecode description
+        , albumArtData = pictureData
+        }
+
 -- | Extract year from DATE field (YYYY-MM-DD or just YYYY)
 extractYearFromDate :: T.Text -> Maybe Int
-extractYearFromDate dateText = 
+extractYearFromDate dateText =
   let yearStr = T.takeWhile (/= '-') dateText
   in readInt yearStr
 

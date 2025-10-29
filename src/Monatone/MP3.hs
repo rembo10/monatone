@@ -3,6 +3,7 @@
 
 module Monatone.MP3
   ( parseMP3
+  , loadAlbumArtMP3
   ) where
 
 import Control.Applicative ((<|>))
@@ -704,8 +705,115 @@ parseAPICFrameInfo bs =
                         , albumArtInfoSizeBytes = imageDataSize
                         }
 
+-- | Load album art from MP3 file (full binary data for writing)
+loadAlbumArtMP3 :: OsPath -> Parser (Maybe AlbumArt)
+loadAlbumArtMP3 filePath = do
+  result <- liftIO $ withBinaryFile filePath ReadMode $ \handle -> do
+    -- Parse ID3v2 tag at beginning if present
+    hSeek handle AbsoluteSeek 0
+    header <- BS.hGet handle 10
+
+    if BS.length header < 10 || BS.take 3 header /= id3v2Signature
+      then return $ Right Nothing  -- No ID3v2 tag
+      else do
+        -- Parse header to get tag size
+        let version = BS.index header 3
+            size = parseSynchsafeInt (BS.drop 6 header)
+
+        -- Read only the ID3v2 tag data
+        tagData <- BS.hGet handle (fromIntegral size)
+
+        -- Find and parse APIC frame with full data
+        return $ Right $ findAndParseAPICFull version (L.fromStrict tagData)
+
+  case result of
+    Left err -> throwError err
+    Right maybeArt -> return maybeArt
+  where
+    findAndParseAPICFull :: Word8 -> L.ByteString -> Maybe AlbumArt
+    findAndParseAPICFull version bs
+      | version < 3 = Nothing  -- APIC only in ID3v2.3+
+      | otherwise = go bs
+      where
+        go bytes
+          | L.length bytes < 10 = Nothing
+          | otherwise =
+              case runGetOrFail (findAPICFrame version) bytes of
+                Left _ -> Nothing
+                Right (_, _, Just pic) -> Just pic
+                Right (rest, consumed, Nothing)
+                  | consumed == 0 -> Nothing
+                  | otherwise -> go rest
+
+        findAPICFrame :: Word8 -> Get (Maybe AlbumArt)
+        findAPICFrame _version = do
+          frameId <- lookAhead $ getByteString 4
+          if frameId == "APIC"
+            then do
+              _ <- getByteString 4  -- Consume frame ID
+              frameSize <- if version >= 4
+                then do
+                  b1 <- getWord8
+                  b2 <- getWord8
+                  b3 <- getWord8
+                  b4 <- getWord8
+                  return $ (fromIntegral b1 `shiftL` 21) .|.
+                           (fromIntegral b2 `shiftL` 14) .|.
+                           (fromIntegral b3 `shiftL` 7) .|.
+                           fromIntegral b4
+                else getWord32be
+              _ <- getWord16be  -- Skip flags
+              frameData <- getByteString (fromIntegral frameSize)
+              return $ parseAPICFrameFull frameData
+            else if BS.all (== 0) frameId
+              then return Nothing
+              else do
+                _ <- getByteString 4
+                frameSize <- if version >= 4
+                  then do
+                    b1 <- getWord8
+                    b2 <- getWord8
+                    b3 <- getWord8
+                    b4 <- getWord8
+                    return $ (fromIntegral b1 `shiftL` 21) .|.
+                             (fromIntegral b2 `shiftL` 14) .|.
+                             (fromIntegral b3 `shiftL` 7) .|.
+                             fromIntegral b4
+                  else getWord32be
+                _ <- getWord16be
+                skip (fromIntegral frameSize)
+                return Nothing
+
+    parseAPICFrameFull :: BS.ByteString -> Maybe AlbumArt
+    parseAPICFrameFull bs =
+      if BS.null bs
+        then Nothing
+        else
+          let _encoding = BS.head bs
+              rest = BS.tail bs
+          in case BS.breakSubstring "\0" rest of
+            (mimeType, afterMime) ->
+              if BS.null afterMime
+                then Nothing
+                else
+                  let rest2 = BS.drop 1 afterMime
+                      pictureType = if BS.null rest2 then 0 else BS.head rest2
+                      rest3 = if BS.null rest2 then BS.empty else BS.tail rest2
+                  in case BS.breakSubstring "\0" rest3 of
+                    (description, afterDesc) ->
+                      if BS.null afterDesc
+                        then Nothing
+                        else
+                          let imageData = BS.drop 1 afterDesc
+                          in Just $ AlbumArt
+                            { albumArtMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
+                            , albumArtPictureType = pictureType
+                            , albumArtDescription = TE.decodeUtf8With TEE.lenientDecode description
+                            , albumArtData = imageData
+                            }
+
 -- | Extract year from TDRC date field (YYYY-MM-DD or just YYYY)
 extractYearFromDate :: T.Text -> Maybe Int
-extractYearFromDate dateText = 
+extractYearFromDate dateText =
   let yearStr = T.takeWhile (/= '-') dateText
   in readInt yearStr

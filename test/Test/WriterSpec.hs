@@ -63,11 +63,9 @@ testBuilderFunctions = testGroup "Builder functions"
       year result @?= Just 2023
       
   , testCase "removeAlbumArt works" $ do
-      let art = AlbumArt "image/jpeg" 3 "Test Art" "fake-image-data"
-          original = (emptyMetadata MP3) { albumArt = Just art }
-          update = removeAlbumArt emptyUpdate
-          result = applyUpdate update original
-      albumArt result @?= Nothing
+      let update = removeAlbumArt emptyUpdate
+      -- albumArtInfo is read-only in Metadata, but updateAlbumArt tracks write intent
+      updateAlbumArt update @?= Just Nothing
   ]
 
 -- Helper to make applyUpdate accessible for testing
@@ -83,7 +81,7 @@ applyUpdate update metadata = metadata
   , genre = applyMaybeUpdate (updateGenre update) (genre metadata)
   , publisher = applyMaybeUpdate (updatePublisher update) (publisher metadata)
   , comment = applyMaybeUpdate (updateComment update) (comment metadata)
-  , albumArt = applyMaybeUpdate (updateAlbumArt update) (albumArt metadata)
+  -- Note: albumArtInfo is read-only, not updated by this test helper
   }
   where
     applyMaybeUpdate :: Maybe (Maybe a) -> Maybe a -> Maybe a

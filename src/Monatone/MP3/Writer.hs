@@ -42,11 +42,12 @@ bufferSize :: Int
 bufferSize = 65536
 
 -- | Write metadata to MP3 file incrementally without loading the entire file
-writeMP3Metadata :: Metadata -> OsPath -> Writer ()
-writeMP3Metadata metadata filePath = do
+-- Takes optional AlbumArt separately since Metadata only stores AlbumArtInfo
+writeMP3Metadata :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeMP3Metadata metadata maybeAlbumArt filePath = do
   -- Open file in read/write mode
   result <- liftIO $ tryIO $ withBinaryFile filePath ReadWriteMode $ \handle -> do
-    runExceptT $ writeMP3HandleIncremental metadata handle
+    runExceptT $ writeMP3HandleIncremental metadata maybeAlbumArt handle
   case result of
     Left (e :: IOException) -> throwError $ WriteIOError $ T.pack $ show e
     Right (Left err) -> throwError err
@@ -56,13 +57,13 @@ writeMP3Metadata metadata filePath = do
     tryIO action = catch (Right <$> action) (return . Left)
 
 -- | Write MP3 metadata using a file handle incrementally
-writeMP3HandleIncremental :: Metadata -> Handle -> Writer ()
-writeMP3HandleIncremental metadata handle = do
+writeMP3HandleIncremental :: Metadata -> Maybe AlbumArt -> Handle -> Writer ()
+writeMP3HandleIncremental metadata maybeAlbumArt handle = do
   -- Find where the audio data starts (after existing ID3v2 tag if present)
   audioDataOffset <- findAudioDataOffsetHandle handle
-  
+
   -- Generate new ID3v2 tag
-  newTagData <- generateID3v2Tag metadata
+  newTagData <- generateID3v2Tag metadata maybeAlbumArt
   let newTagSize = fromIntegral $ L.length newTagData
   
   -- Get file size
@@ -203,10 +204,10 @@ intToSyncSafe n =
   in (b1, b2, b3, b4)
 
 -- | Generate complete ID3v2.4 tag
-generateID3v2Tag :: Metadata -> Writer L.ByteString
-generateID3v2Tag metadata = do
+generateID3v2Tag :: Metadata -> Maybe AlbumArt -> Writer L.ByteString
+generateID3v2Tag metadata maybeAlbumArt = do
   -- Generate all frames
-  frames <- generateFrames metadata
+  frames <- generateFrames metadata maybeAlbumArt
   let framesData = L.concat frames
       framesSize = fromIntegral $ L.length framesData
   
@@ -225,8 +226,8 @@ generateID3v2Tag metadata = do
   return $ header <> framesData
 
 -- | Generate all ID3v2.4 frames for the metadata
-generateFrames :: Metadata -> Writer [L.ByteString]
-generateFrames metadata = do
+generateFrames :: Metadata -> Maybe AlbumArt -> Writer [L.ByteString]
+generateFrames metadata maybeAlbumArt = do
   -- Start with empty list
   frames0 <- return []
   
@@ -261,14 +262,12 @@ generateFrames metadata = do
   -- Add date field (separate from year) if present
   frames17 <- addTextFrame frames16 "TDRC" (date metadata)
 
-  -- TODO: Album art writing temporarily disabled - Metadata now only stores AlbumArtInfo
-  -- Writers will need to load full AlbumArt separately when needed
-  finalFrames <- return frames17
-  -- finalFrames <- case albumArt metadata of
-  --   Nothing -> return frames17
-  --   Just artData -> do
-  --     apicFrame <- generateAPICFrame artData
-  --     return $ apicFrame : frames17
+  -- Add album art frame if provided
+  finalFrames <- case maybeAlbumArt of
+    Nothing -> return frames17
+    Just artData -> do
+      apicFrame <- generateAPICFrame artData
+      return $ apicFrame : frames17
 
   return finalFrames
   where

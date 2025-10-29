@@ -4,6 +4,7 @@
 module Monatone.FLAC
   ( parseFLAC
   , parseVorbisComments
+  , loadAlbumArtFLAC
   ) where
 
 import Control.Applicative ((<|>))
@@ -308,8 +309,75 @@ parsePictureBlock bs metadata =
         , albumArtInfoSizeBytes = fromIntegral pictureDataLength
         }
 
+-- | Load album art from FLAC file (full binary data for writing)
+loadAlbumArtFLAC :: OsPath -> Parser (Maybe AlbumArt)
+loadAlbumArtFLAC filePath = do
+  result <- liftIO $ withBinaryFile filePath ReadMode $ \handle -> do
+    -- Read and verify FLAC signature (4 bytes)
+    sig <- BS.hGet handle 4
+    if sig /= flacSignature
+      then return $ Left $ CorruptedFile "Invalid FLAC signature"
+      else do
+        -- Search for Picture block
+        Right <$> findPictureBlock handle
+
+  case result of
+    Left err -> throwError err
+    Right maybeArt -> return maybeArt
+  where
+    findPictureBlock :: Handle -> IO (Maybe AlbumArt)
+    findPictureBlock handle = do
+      -- Read block header (4 bytes)
+      headerBytes <- BS.hGet handle 4
+      if BS.length headerBytes < 4
+        then return Nothing  -- EOF
+        else do
+          let header = parseBlockHeader headerBytes
+
+          -- Check if this is a Picture block
+          if blockType header == Picture
+            then do
+              -- Parse the picture block with full data
+              pictureData <- BS.hGet handle (fromIntegral $ blockLength header)
+              return $ parsePictureBlockFull pictureData
+            else do
+              -- Skip this block and continue
+              hSeek handle RelativeSeek (fromIntegral $ blockLength header)
+              -- Stop if this was the last metadata block
+              if isLast header
+                then return Nothing
+                else findPictureBlock handle
+
+    parsePictureBlockFull :: BS.ByteString -> Maybe AlbumArt
+    parsePictureBlockFull bs =
+      let lazyBs = L.fromStrict bs
+      in case runGetOrFail parsePictureData lazyBs of
+        Left _ -> Nothing
+        Right (_, _, art) -> Just art
+
+    parsePictureData :: Get AlbumArt
+    parsePictureData = do
+      pictureType <- getWord32be
+      mimeLength <- getWord32be
+      mimeType <- getByteString (fromIntegral mimeLength)
+      descLength <- getWord32be
+      description <- getByteString (fromIntegral descLength)
+      _width <- getWord32be
+      _height <- getWord32be
+      _colorDepth <- getWord32be
+      _numColors <- getWord32be
+      pictureDataLength <- getWord32be
+      pictureData <- getByteString (fromIntegral pictureDataLength)
+
+      return $ AlbumArt
+        { albumArtMimeType = TE.decodeUtf8With TEE.lenientDecode mimeType
+        , albumArtPictureType = fromIntegral pictureType
+        , albumArtDescription = TE.decodeUtf8With TEE.lenientDecode description
+        , albumArtData = pictureData
+        }
+
 -- | Extract year from DATE field (YYYY-MM-DD or just YYYY)
 extractYearFromDate :: T.Text -> Maybe Int
-extractYearFromDate dateText = 
+extractYearFromDate dateText =
   let yearStr = T.takeWhile (/= '-') dateText
   in readInt yearStr

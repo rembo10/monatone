@@ -41,11 +41,12 @@ bufferSize :: Int
 bufferSize = 65536
 
 -- | Write metadata to FLAC file incrementally
-writeFLACMetadata :: Metadata -> OsPath -> Writer ()
-writeFLACMetadata metadata filePath = do
+-- Takes optional AlbumArt separately since Metadata only stores AlbumArtInfo
+writeFLACMetadata :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeFLACMetadata metadata maybeAlbumArt filePath = do
   -- Open file in read/write mode
   result <- liftIO $ tryIO $ withBinaryFile filePath ReadWriteMode $ \handle -> do
-    runExceptT $ writeFLACHandleIncremental metadata handle
+    runExceptT $ writeFLACHandleIncremental metadata maybeAlbumArt handle
   case result of
     Left (e :: IOException) -> throwError $ WriteIOError $ T.pack $ show e
     Right (Left err) -> throwError err
@@ -55,25 +56,25 @@ writeFLACMetadata metadata filePath = do
     tryIO action = catch (Right <$> action) (return . Left)
 
 -- | Write FLAC metadata using a file handle incrementally
-writeFLACHandleIncremental :: Metadata -> Handle -> Writer ()
-writeFLACHandleIncremental metadata handle = do
+writeFLACHandleIncremental :: Metadata -> Maybe AlbumArt -> Handle -> Writer ()
+writeFLACHandleIncremental metadata maybeAlbumArt handle = do
   -- Verify FLAC signature
   liftIO $ hSeek handle AbsoluteSeek 0
   sig <- liftIO $ BS.hGet handle 4
   case BS.unpack sig of
     [0x66, 0x4C, 0x61, 0x43] -> pure ()  -- "fLaC"
     _ -> throwError $ CorruptedWrite "Invalid FLAC signature"
-  
+
   -- Extract original STREAMINFO block for preservation (it's always first, 34 bytes)
   streamInfoHeader <- liftIO $ BS.hGet handle 4
   streamInfoData <- liftIO $ BS.hGet handle 34
   let originalStreamInfo = L.fromStrict $ BS.append streamInfoHeader streamInfoData
-  
+
   -- Find where the audio data starts
   audioDataOffset <- findAudioDataOffsetHandle handle 4  -- Start after "fLaC"
-  
+
   -- Generate new metadata blocks with preserved STREAMINFO
-  newMetadataBlocks <- generateMetadataBlocks metadata originalStreamInfo
+  newMetadataBlocks <- generateMetadataBlocks metadata maybeAlbumArt originalStreamInfo
   let newMetadataSize = fromIntegral $ L.length newMetadataBlocks
   
   -- Get file size
@@ -224,22 +225,35 @@ _extractStreamInfoBlock blockData = do
     else return $ L.take 38 blockData  -- Include header + data
 
 -- | Generate new metadata blocks
-generateMetadataBlocks :: Metadata -> L.ByteString -> Writer L.ByteString
-generateMetadataBlocks metadata originalStreamInfo = do
+generateMetadataBlocks :: Metadata -> Maybe AlbumArt -> L.ByteString -> Writer L.ByteString
+generateMetadataBlocks metadata maybeAlbumArt originalStreamInfo = do
   -- Generate Vorbis comment block with metadata
   vorbisBlock <- generateVorbisCommentBlock metadata False
-  
+
   -- Mark STREAMINFO as not-last (clear the last-block flag)
   let streamInfoNotLast = case L.unpack originalStreamInfo of
         (firstByte:rest) -> L.pack $ (firstByte .&. 0x7F) : rest  -- Clear the 0x80 bit
         _ -> originalStreamInfo
-  
-  -- Mark Vorbis comment as last block
-  let vorbisBlockLast = case L.unpack vorbisBlock of
-        (firstByte:rest) -> L.pack $ (firstByte .|. 0x80) : rest  -- Set the 0x80 bit
-        _ -> vorbisBlock
-  
-  return $ streamInfoNotLast <> vorbisBlockLast
+
+  -- Generate Picture block if album art is provided
+  case maybeAlbumArt of
+    Nothing -> do
+      -- Mark Vorbis comment as last block
+      let vorbisBlockLast = case L.unpack vorbisBlock of
+            (firstByte:rest) -> L.pack $ (firstByte .|. 0x80) : rest  -- Set the 0x80 bit
+            _ -> vorbisBlock
+      return $ streamInfoNotLast <> vorbisBlockLast
+
+    Just albumArt -> do
+      -- Generate Picture block
+      pictureBlock <- generatePictureBlock albumArt True
+
+      -- Mark Vorbis comment as not-last
+      let vorbisBlockNotLast = case L.unpack vorbisBlock of
+            (firstByte:rest) -> L.pack $ (firstByte .&. 0x7F) : rest  -- Clear the 0x80 bit
+            _ -> vorbisBlock
+
+      return $ streamInfoNotLast <> vorbisBlockNotLast <> pictureBlock
 
 -- | Generate Vorbis comment block
 generateVorbisCommentBlock :: Metadata -> Bool -> Writer L.ByteString
@@ -377,3 +391,37 @@ generateVorbisComments metadata = do
         Nothing -> comments21
 
   return comments22
+
+-- | Generate Picture block for album art
+generatePictureBlock :: AlbumArt -> Bool -> Writer L.ByteString
+generatePictureBlock art isLastBlock = do
+  let mimeBytes = TE.encodeUtf8 $ albumArtMimeType art
+      descBytes = TE.encodeUtf8 $ albumArtDescription art
+      imageData = albumArtData art
+
+      -- Build picture data according to FLAC spec
+      pictureData = runPut $ do
+        putWord32be $ fromIntegral $ albumArtPictureType art  -- Picture type
+        putWord32be $ fromIntegral $ BS.length mimeBytes      -- MIME type length
+        putByteString mimeBytes                               -- MIME type
+        putWord32be $ fromIntegral $ BS.length descBytes      -- Description length
+        putByteString descBytes                               -- Description
+        putWord32be 0                                         -- Width (0 = unknown)
+        putWord32be 0                                         -- Height (0 = unknown)
+        putWord32be 0                                         -- Color depth (0 = unknown)
+        putWord32be 0                                         -- Number of colors (0 = unknown)
+        putWord32be $ fromIntegral $ BS.length imageData      -- Picture data length
+        putByteString imageData                               -- Picture data
+
+      blockLen = fromIntegral $ L.length pictureData :: Word32
+      headerByte = if isLastBlock then 0x86 else 0x06  -- Block type 6 = Picture
+
+      -- Build block header
+      header = runPut $ do
+        putWord8 headerByte
+        -- Write 24-bit length
+        putWord8 $ fromIntegral $ (blockLen `shiftR` 16) .&. 0xFF
+        putWord8 $ fromIntegral $ (blockLen `shiftR` 8) .&. 0xFF
+        putWord8 $ fromIntegral $ blockLen .&. 0xFF
+
+  return $ header <> pictureData
