@@ -15,8 +15,8 @@
         
         monatone = (haskellPackages.callCabal2nix "monatone" ./. {}).overrideAttrs (oldAttrs: {
           # Make ffmpeg available during test phase
-          nativeBuildInputs = (oldAttrs.nativeBuildInputs or []) ++ [ pkgs.ffmpeg ];
-          checkInputs = (oldAttrs.checkInputs or []) ++ [ pkgs.ffmpeg ];
+          nativeBuildInputs = (oldAttrs.nativeBuildInputs or []) ++ [ pkgs.ffmpeg-headless ];
+          checkInputs = (oldAttrs.checkInputs or []) ++ [ pkgs.ffmpeg-headless ];
         });
         
       in
@@ -37,7 +37,7 @@
             ormolu
             cabal2nix
           ] ++ [
-            pkgs.ffmpeg
+            pkgs.ffmpeg-headless
           ];
 
           shellHook = ''
