@@ -285,8 +285,6 @@ testReadMinimalM4A = testCase "Read minimal M4A" $ do
   case result of
     Left err -> assertFailure $ T.unpack $ "Failed to parse: " <> T.pack (show err)
     Right metadata -> do
-      -- Debug: print raw tags
-      putStrLn $ "Raw tags: " ++ show (rawTags metadata)
       assertEqual "Format" M4A (format metadata)
       assertEqual "Title" (Just "M4A Test Track") (title metadata)
       assertEqual "Artist" (Just "M4A Artist") (artist metadata)
