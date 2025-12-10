@@ -26,10 +26,12 @@ tests = withResource ensureFixtures (const $ return ()) $ \_ ->
         [ testReadMinimalMP3
         , testReadTaggedMP3
         , testReadMinimalFLAC
+        , testReadMinimalM4A
         ]
     , testGroup "Round-trip Tests"
         [ testMP3RoundTrip
         , testFLACRoundTrip
+        , testM4ARoundTrip
         ]
     ]
 
@@ -39,6 +41,7 @@ ensureFixtures = do
   let files = [ fixturesDir </> "minimal.mp3"
               , fixturesDir </> "tagged.mp3"
               , fixturesDir </> "minimal.flac"
+              , fixturesDir </> "minimal.m4a"
               ]
   allExist <- and <$> mapM doesFileExist files
   unless allExist $ do
@@ -83,7 +86,19 @@ generateTestFiles = do
                         "-metadata", "track=3",
                         "-metadata", "comment=FLAC test comment",
                         "-y", fixturesDir </> "minimal.flac"]
-  
+
+  -- Create M4A with metadata (AAC)
+  callProcess "ffmpeg" ["-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "/tmp/silence.raw",
+                        "-codec:a", "aac", "-b:a", "128k",
+                        "-metadata", "title=M4A Test Track",
+                        "-metadata", "artist=M4A Artist",
+                        "-metadata", "album=M4A Album",
+                        "-metadata", "date=2024",
+                        "-metadata", "track=2/10",
+                        "-metadata", "genre=Electronic",
+                        "-metadata", "comment=M4A test comment",
+                        "-y", fixturesDir </> "minimal.m4a"]
+
   -- Clean up
   removeFile "/tmp/silence.raw" `catch` (\(_ :: SomeException) -> return ())
 
@@ -252,9 +267,109 @@ testFLACRoundTrip = testCase "FLAC read-write-read round trip" $ do
       -- Original artist should be preserved
       assertEqual "Artist preserved" (artist origMetadata) (artist modMetadata)
       -- Audio properties should remain unchanged
-      assertEqual "Audio props preserved" 
-        (audioProperties origMetadata) 
+      assertEqual "Audio props preserved"
+        (audioProperties origMetadata)
         (audioProperties modMetadata)
-  
+
+  -- Clean up
+  removeFile tmpPath
+
+testReadMinimalM4A :: TestTree
+testReadMinimalM4A = testCase "Read minimal M4A" $ do
+  let path = fixturesDir </> "minimal.m4a"
+  exists <- doesFileExist path
+  unless exists $ assertFailure "Test skipped: fixture not available (run with ffmpeg to generate)"
+
+  osPath <- toOsPath path
+  result <- parseMetadata osPath
+  case result of
+    Left err -> assertFailure $ T.unpack $ "Failed to parse: " <> T.pack (show err)
+    Right metadata -> do
+      -- Debug: print raw tags
+      putStrLn $ "Raw tags: " ++ show (rawTags metadata)
+      assertEqual "Format" M4A (format metadata)
+      assertEqual "Title" (Just "M4A Test Track") (title metadata)
+      assertEqual "Artist" (Just "M4A Artist") (artist metadata)
+      assertEqual "Album" (Just "M4A Album") (album metadata)
+      assertEqual "Track number" (Just 2) (trackNumber metadata)
+      assertEqual "Total tracks" (Just 10) (totalTracks metadata)
+      assertEqual "Genre" (Just "Electronic") (genre metadata)
+
+      -- Check audio properties
+      let props = audioProperties metadata
+      case sampleRate props of
+        Just sr -> assertEqual "Sample rate" 44100 sr
+        Nothing -> assertFailure "No sample rate found"
+      case channels props of
+        Just ch -> assertEqual "Channels" 2 ch
+        Nothing -> assertFailure "No channels found"
+
+testM4ARoundTrip :: TestTree
+testM4ARoundTrip = testCase "M4A read-write-read round trip" $ do
+  -- Use system temp directory
+  tmpDir <- getTemporaryDirectory
+  let origPath = fixturesDir </> "minimal.m4a"
+  let tmpPath = tmpDir </> "monatone-test-m4a.m4a"
+
+  -- Verify source file exists
+  origExists <- doesFileExist origPath
+  assertBool (T.unpack $ "Source file exists: " <> T.pack origPath) origExists
+
+  -- Copy file to temp location
+  copyFile origPath tmpPath
+
+  -- Verify copy succeeded
+  tmpExists <- doesFileExist tmpPath
+  assertBool (T.unpack $ "Temp file created: " <> T.pack tmpPath) tmpExists
+
+  -- Read original metadata
+  osTmpPath <- toOsPath tmpPath
+  origResult <- parseMetadata osTmpPath
+  origMetadata <- case origResult of
+    Left err -> assertFailure $ T.unpack $ "Failed to read original: " <> T.pack (show err)
+    Right m -> return m
+
+  -- Modify metadata including freeform fields
+  let update = setTitle "Modified M4A Title" $
+               setArtist "New Artist" $
+               setYear 2025 $
+               setTrackNumber 7 $
+               setGenre "Jazz" $
+               setLabel "Test Records" $
+               setCatalogNumber "TEST-001" $
+               setBarcode "1234567890123" $
+               setReleaseCountry "US" $
+               emptyUpdate
+
+  writeResult <- runExceptT $ updateMetadata osTmpPath update
+  case writeResult of
+    Left err -> assertFailure $ "Failed to write: " ++ show err
+    Right () -> return ()
+
+  -- Read modified metadata
+  modResult <- parseMetadata osTmpPath
+  case modResult of
+    Left err -> assertFailure $ "Failed to read modified: " ++ show err
+    Right modMetadata -> do
+      assertEqual "Modified title" (Just "Modified M4A Title") (title modMetadata)
+      assertEqual "Modified artist" (Just "New Artist") (artist modMetadata)
+      assertEqual "Modified year" (Just 2025) (year modMetadata)
+      assertEqual "Modified track" (Just 7) (trackNumber modMetadata)
+      assertEqual "Modified genre" (Just "Jazz") (genre modMetadata)
+      -- Freeform fields
+      assertEqual "Record label" (Just "Test Records") (recordLabel modMetadata)
+      assertEqual "Catalog number" (Just "TEST-001") (catalogNumber modMetadata)
+      assertEqual "Barcode" (Just "1234567890123") (barcode modMetadata)
+      assertEqual "Release country" (Just "US") (releaseCountry modMetadata)
+      -- Unchanged fields should be preserved
+      assertEqual "Album preserved" (album origMetadata) (album modMetadata)
+      assertEqual "Comment preserved" (comment origMetadata) (comment modMetadata)
+      -- Total tracks should be preserved
+      assertEqual "Total tracks preserved" (totalTracks origMetadata) (totalTracks modMetadata)
+      -- Audio properties should remain unchanged
+      assertEqual "Audio props preserved"
+        (audioProperties origMetadata)
+        (audioProperties modMetadata)
+
   -- Clean up
   removeFile tmpPath

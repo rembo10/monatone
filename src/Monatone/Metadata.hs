@@ -24,11 +24,12 @@ import Data.Word (Word8)
 import Data.Aeson
 
 -- | Supported audio formats
-data AudioFormat 
+data AudioFormat
   = FLAC
   | OGG
-  | Opus  
+  | Opus
   | MP3
+  | M4A     -- AAC, ALAC, and other MP4 audio formats
   deriving (Show, Eq, Ord, Read)
 
 instance ToJSON AudioFormat where
@@ -36,6 +37,7 @@ instance ToJSON AudioFormat where
   toJSON OGG = "ogg"
   toJSON Opus = "opus"
   toJSON MP3 = "mp3"
+  toJSON M4A = "m4a"
 
 instance FromJSON AudioFormat where
   parseJSON = withText "AudioFormat" $ \t -> case t of
@@ -43,6 +45,7 @@ instance FromJSON AudioFormat where
     "ogg" -> return OGG
     "opus" -> return Opus
     "mp3" -> return MP3
+    "m4a" -> return M4A
     _ -> fail $ "Unknown audio format: " ++ show t
 
 -- | Audio file properties

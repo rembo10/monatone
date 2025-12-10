@@ -53,8 +53,10 @@ import Monatone.Types (Parser, ParseError(..))
 import Monatone.Common (loadAlbumArt)
 import qualified Monatone.MP3 as MP3
 import qualified Monatone.FLAC as FLAC
+import qualified Monatone.M4A as M4A
 import qualified Monatone.MP3.Writer as MP3Writer
 import qualified Monatone.FLAC.Writer as FLACWriter
+import qualified Monatone.M4A.Writer as M4AWriter
 
 -- | Write operation errors
 data WriteError
@@ -135,7 +137,10 @@ setDiscNumber newDiscNumber update = update { updateDiscNumber = Just (Just newD
 
 -- | Set year
 setYear :: Int -> MetadataUpdate -> MetadataUpdate
-setYear newYear update = update { updateYear = Just (Just newYear) }
+setYear newYear update = update
+  { updateYear = Just (Just newYear)
+  , updateDate = Just (Just (T.pack $ show newYear))  -- Also update date field for formats that use it
+  }
 
 -- | Set genre
 setGenre :: Text -> MetadataUpdate -> MetadataUpdate
@@ -248,6 +253,7 @@ writeMetadata metadata maybeAlbumArt filePath = do
   case audioFormat of
     MP3 -> writeMP3Metadata metadata maybeAlbumArt filePath
     FLAC -> writeFLACMetadata metadata maybeAlbumArt filePath
+    M4A -> writeM4AMetadata metadata maybeAlbumArt filePath
     _ -> throwError $ UnsupportedWriteFormat audioFormat
 
 -- | Write metadata to the same file (with backup)
@@ -339,13 +345,29 @@ writeFLACMetadata metadata maybeAlbumArt filePath = do
     convertFLACError (FLACWriter.InvalidMetadata msg) = InvalidMetadata msg
     convertFLACError (FLACWriter.CorruptedWrite msg) = CorruptedWrite msg
 
+-- | Write M4A metadata using the M4AWriter module
+writeM4AMetadata :: Metadata -> Maybe AlbumArt -> OsPath -> Writer ()
+writeM4AMetadata metadata maybeAlbumArt filePath = do
+  result <- liftIO $ runExceptT $ M4AWriter.writeM4AMetadata metadata maybeAlbumArt filePath
+  case result of
+    Left m4aErr -> throwError $ convertM4AError m4aErr
+    Right () -> return ()
+  where
+    convertM4AError :: M4AWriter.WriteError -> WriteError
+    convertM4AError (M4AWriter.WriteIOError msg) = WriteIOError msg
+    convertM4AError (M4AWriter.UnsupportedWriteFormat fmt) = UnsupportedWriteFormat fmt
+    convertM4AError (M4AWriter.InvalidMetadata msg) = InvalidMetadata msg
+    convertM4AError (M4AWriter.CorruptedWrite msg) = CorruptedWrite msg
+
 -- | Parse file using existing parsers based on extension
-parseFile :: OsPath -> Parser Metadata  
+parseFile :: OsPath -> Parser Metadata
 parseFile filePath = do
   -- Convert extension to lowercase for comparison
   let ext = takeExtension filePath
   if ext == [osp|.mp3|] || ext == [osp|.MP3|]
     then MP3.parseMP3 filePath
     else if ext == [osp|.flac|] || ext == [osp|.FLAC|]
-    then FLAC.parseFLAC filePath  
+    then FLAC.parseFLAC filePath
+    else if ext == [osp|.m4a|] || ext == [osp|.M4A|] || ext == [osp|.mp4|] || ext == [osp|.MP4|]
+    then M4A.parseM4A filePath
     else throwError $ UnsupportedFormat "Unsupported file extension"

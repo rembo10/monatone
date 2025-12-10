@@ -20,6 +20,7 @@ import Monatone.Types
 import qualified Monatone.FLAC as FLAC
 import qualified Monatone.OGG as OGG
 import qualified Monatone.MP3 as MP3
+import qualified Monatone.M4A as M4A
 
 -- | Detect audio format from file header
 detectFormat :: ByteString -> Maybe AudioFormat
@@ -27,6 +28,7 @@ detectFormat bs
   | BS.isPrefixOf "fLaC" bs = Just FLAC
   | BS.isPrefixOf "OggS" bs = detectOggFormat bs
   | hasMP3Header bs = Just MP3
+  | hasM4AHeader bs = Just M4A
   | otherwise = Nothing
 
 -- | Detect specific OGG format (Vorbis vs Opus)
@@ -41,11 +43,19 @@ hasMP3Header :: ByteString -> Bool
 hasMP3Header bs
   | BS.length bs < 3 = False
   | BS.isPrefixOf "ID3" bs = True
-  | BS.length bs >= 2 = 
+  | BS.length bs >= 2 =
       let firstByte = BS.index bs 0
           secondByte = BS.index bs 1
       in firstByte == 0xFF && (secondByte .&. 0xE0) == 0xE0
   | otherwise = False
+
+-- | Check for M4A/MP4 header (ftyp atom with compatible brands)
+hasM4AHeader :: ByteString -> Bool
+hasM4AHeader bs
+  | BS.length bs < 12 = False
+  | otherwise =
+      let ftypSig = BS.take 4 $ BS.drop 4 bs
+      in ftypSig == "ftyp"
 
 -- | Parse metadata from file
 parseMetadata :: OsPath -> IO (Either ParseError Metadata)
@@ -59,6 +69,7 @@ parseMetadata filePath = do
       OGG -> OGG.parseOGG filePath
       Opus -> OGG.parseOGG filePath  -- Opus uses same OGG container format
       MP3 -> MP3.parseMP3 filePath
+      M4A -> M4A.parseM4A filePath
 
 -- | Load full album art from file on-demand (for writing)
 -- This reads only the album art data, not all metadata
@@ -73,4 +84,5 @@ loadAlbumArt filePath = do
       OGG -> OGG.loadAlbumArtOGG filePath
       Opus -> OGG.loadAlbumArtOGG filePath
       MP3 -> MP3.loadAlbumArtMP3 filePath
+      M4A -> M4A.loadAlbumArtM4A filePath
 
