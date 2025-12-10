@@ -1,6 +1,6 @@
 # Changelog for `monatone`
 
-## [Unreleased]
+## [0.2.0.0] - 2025-12-10
 
 ### Added
 - **M4A/AAC/ALAC Support**: Complete read/write support for M4A audio files

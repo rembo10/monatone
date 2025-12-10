@@ -1,6 +1,6 @@
 cabal-version:   3.4
 name:            monatone
-version:         0.1.0.0
+version:         0.2.0.0
 synopsis:        Pure Haskell library for audio metadata parsing and writing
 description:     Monatone is a pure Haskell library for parsing and writing
                  metadata from audio files. Supported formats include
