@@ -2,27 +2,25 @@ cabal-version:   3.4
 name:            monatone
 version:         0.2.0.0
 synopsis:        Pure Haskell library for audio metadata parsing and writing
-description:     Monatone is a pure Haskell library for parsing and writing
-                 metadata from audio files. Supported formats include
-                 .
-                 - FLAC (full read/write support with Vorbis comments and
-                   album art)
-                 - MP3 (ID3v1, ID3v2.3, and ID3v2.4 tags including APIC frames
-                   for album art)
-                 - M4A/AAC/ALAC (iTunes-style metadata with MP4 atoms)
-                 - OGG/Vorbis (Vorbis comment reading)
-                 - Opus (basic metadata support)
-                 .
-                 Features include a pure Haskell implementation with no FFI
-                 dependencies, streaming support for large files, type-safe
-                 metadata representation, and comprehensive tag writing support
-                 for FLAC, MP3, and M4A formats.
+description:
+  Monatone is a pure Haskell library for parsing and writing
+  metadata from audio files. Supported formats include:
+
+  - FLAC (full read\/write support with Vorbis comments and album art)
+  - MP3 (ID3v1, ID3v2.3, and ID3v2.4 tags including APIC frames for album art)
+  - M4A\/AAC\/ALAC (iTunes-style metadata with MP4 atoms and MusicBrainz support)
+  - OGG\/Vorbis (Vorbis comment reading)
+  - Opus (basic metadata support)
+
+  Features include a pure Haskell implementation with no FFI dependencies,
+  streaming support for large files, type-safe metadata representation,
+  and comprehensive tag writing support for FLAC, MP3, and M4A formats.
 homepage:        https://github.com/rembo10/monatone
 bug-reports:     https://github.com/rembo10/monatone/issues
 license:         GPL-3.0-only
 license-file:    LICENSE
 author:          rembo10
-maintainer:      rembo10@users.noreply.github.com
+maintainer:      rembo10@codeshy.com
 category:        Audio, Sound
 stability:       experimental
 build-type:      Simple
